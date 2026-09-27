@@ -14,7 +14,137 @@ import java.util.List;
 public class Main {
     public static void main(String[] args) {
         EntityManagerFactory emf = JPAUtil.getEmFactory();
+
         try (EntityManager em = emf.createEntityManager()) {
+            insertSampleData(em);
+        }
+
+        printDivider();
+        try (EntityManager em = emf.createEntityManager()) {
+            // Find all books by a given author's name using JPQL.
+            Query query = em.createQuery("SELECT a.books FROM Author a WHERE a.name =:name");
+            query.setParameter("name", "Laurentiu Spilca");
+            List<Book> booksByAuthor =  query.getResultList();
+            System.out.println("Books written by Laurentiu Spilca: ");
+            printList(booksByAuthor);
+            printDivider();
+
+            // Find all books belonging to a given publisher.
+            query = em.createQuery("SELECT b FROM Book b JOIN FETCH b.publisher p WHERE p.name =:name");
+            query.setParameter("name", "O'Reilly Media");
+            List<Book> booksByPublisher =  query.getResultList();
+            System.out.println("Books published by O'Reilly Media: ");
+            printList(booksByPublisher);
+            printDivider();
+
+
+            // Find a specific Book by id using a positional parameter.
+            query = em.createQuery("SELECT b FROM Book b WHERE b.id =?1");
+            query.setParameter(1, 2);
+            Book bookById = (Book) query.getSingleResult();
+            System.out.println("Book with id of 2: " +bookById);
+            printDivider();
+
+
+            // Fetch an Author together with all of their Books using JOIN FETCH.
+            query = em.createQuery("SELECT a FROM Author a JOIN FETCH a.books WHERE a.name =:name");
+            query.setParameter("name", "Christian Bauer");
+            Author authorWithBooks = (Author) query.getSingleResult();
+            System.out.println("Author: " + authorWithBooks);
+            System.out.println("Books: " );
+            printList(authorWithBooks.getBooks());
+            printDivider();
+
+            // Write an aggregate query that returns each author's name and the number of books they have using COUNT and
+            // GROUP BY.
+            query = em.createQuery("SELECT a.name, COUNT(b.id) FROM Author a JOIN a.books b ON a = b.author GROUP BY a");
+            for (Object[] rows : (List<Object[]>)query.getResultList()) {
+                System.out.println("Author name: " + (String)rows[0]+ (", No. Books written: " + (long)rows[1]));
+            }
+            printDivider();
+
+
+            // Create a Criteria API query that finds books by title.
+            // Extend the Criteria API query so that the title and author-name filters are optional and predicates are added
+            // dynamically.
+            CriteriaBuilder cb = em.getCriteriaBuilder();
+            CriteriaQuery<Book> bookCriteriaQuery = cb.createQuery(Book.class);
+            Root<Book> root = bookCriteriaQuery.from(Book.class);
+
+            String titleFilter = "";
+            String publisherNameFilter = "Manning Publications";
+            List<Predicate> predicates = new ArrayList<>();
+            if (titleFilter != null && !titleFilter.isEmpty()) {
+                predicates.add(cb.equal(root.get("title"), titleFilter));
+            }
+
+            Join<Book, Author> publisherJoin = root.join("publisher");
+
+            if (publisherNameFilter != null && !publisherNameFilter.isEmpty()) {
+                predicates.add(cb.equal(publisherJoin.get("name"), publisherNameFilter));
+            }
+
+            bookCriteriaQuery.where(predicates.toArray(new Predicate[0])).select(root);
+
+            Query bookQuery = em.createQuery(bookCriteriaQuery);
+            List<Book> booksUsingCriteria = bookQuery.getResultList();
+
+            System.out.println("Books fetched by Criteria Query: ");
+            printList(booksUsingCriteria);
+
+        }
+        printDivider();
+
+        //  Compare a normal LAZY query with the JOIN FETCH version and explain why JOIN FETCH can prevent
+        // LazyInitializationException for that use case.
+        try (EntityManager em = emf.createEntityManager()) {
+
+            Query query = em.createQuery("SELECT b FROM Book b WHERE b.id=3");
+            //query = em.createQuery("SELECT b FROM Book b JOIN FETCH b.categories WHERE b.id=3");
+            Book book = (Book) query.getSingleResult();
+            em.close();
+            List<Category> categories = book.getCategories();
+            printList(categories);
+        } catch (LazyInitializationException lzie) {
+            System.out.println("A normal lazy query does not fetch the categories in the original query and therefore getCategories() throws a LazyInitializationException.");
+        }
+
+
+        try (EntityManager em = emf.createEntityManager()) {
+//            Query query = em.createQuery("SELECT b FROM Book b WHERE b.id=3");
+            Query query = em.createQuery("SELECT b FROM Book b JOIN FETCH b.categories WHERE b.id=3");
+            Book book = (Book) query.getSingleResult();
+            em.close();
+            List<Category> categories = book.getCategories();
+            System.out.println("JOIN FETCHing categories:");
+            printList(categories);
+        }
+        printDivider();
+
+
+        // Write one query using standard JPQL and explain how a Hibernate-specific HQL feature would differ.
+        try (EntityManager em = emf.createEntityManager()) {
+//            Query query = em.createQuery("SELECT b FROM Book b WHERE b.id=3");
+            Query jpqlQuery = em.createQuery("SELECT b FROM Book b JOIN FETCH b.publisher p WHERE p.name=?1");
+            jpqlQuery.setParameter(1, "O'Reilly Media");
+
+            // In native HQL you can omit select statement, and implicitly join by using member access
+            Query hqlQuery = em.createQuery("FROM Book b WHERE b.publisher.name=?1");
+            hqlQuery.setParameter(1, "O'Reilly Media");
+
+
+            List<Book> books1 = jpqlQuery.getResultList();
+            List<Book> books2 = hqlQuery.getResultList();
+
+            System.out.println("Result returned by JPQL query: ");
+            printList(books1);
+            System.out.println("Result returned by HQL query: ");
+            printList(books2);
+        }
+        printDivider();
+    }
+
+    private static void insertSampleData(EntityManager em) {
             Category javaProgramming = new Category("Java Programming");
             Category springCore = new Category("Spring Core");
             Category softwareSecurity = new Category("Software Security");
@@ -100,112 +230,16 @@ public class Main {
             em.persist(customer3);
             em.getTransaction().commit();
 
+    }
 
-        }
+    private static void printDivider() {
+        //System.out.println("▬".repeat(100));    }
+        System.out.println("=".repeat(200));
+    }
 
-
-        try (EntityManager em = emf.createEntityManager()) {
-            // Find all books by a given author's name using JPQL.
-            Query query = em.createQuery("SELECT a.books FROM Author a WHERE a.name =:name");
-            query.setParameter("name", "Laurentiu Spilca");
-            List<Book> booksByAuthor =  query.getResultList();
-            System.out.println(booksByAuthor);
-
-            // Find all books belonging to a given publisher.
-            query = em.createQuery("SELECT b FROM Book b JOIN FETCH b.publisher p WHERE p.name =:name");
-            query.setParameter("name", "O'Reilly Media");
-            List<Book> booksByPublisher =  query.getResultList();
-            System.out.println(booksByPublisher);
-            System.out.println(booksByPublisher.stream().map(b->b.getPublisher()).toList());
-
-            // Find a specific Book by id using a positional parameter.
-            query = em.createQuery("SELECT b FROM Book b WHERE b.id =?1");
-            query.setParameter(1, 2);
-            Book bookById = (Book) query.getSingleResult();
-            System.out.println(bookById);
-
-            // Fetch an Author together with all of their Books using JOIN FETCH.
-            query = em.createQuery("SELECT a FROM Author a JOIN FETCH a.books WHERE a.name =:name");
-            query.setParameter("name", "Christian Bauer");
-            Author authorWithBooks = (Author) query.getSingleResult();
-            System.out.println("Author: " + authorWithBooks);
-            System.out.println("Books: " + authorWithBooks.getBooks());
-
-
-            // Write an aggregate query that returns each author's name and the number of books they have using COUNT and
-            // GROUP BY.
-            query = em.createQuery("SELECT a.name, COUNT(b.id) FROM Author a JOIN a.books b ON a = b.author GROUP BY a");
-            for (Object[] rows : (List<Object[]>)query.getResultList()) {
-                System.out.println("Author name: " + (String)rows[0]+ (", No. Books written: " + (long)rows[1]));
-            }
-
-            // Create a Criteria API query that finds books by title.
-            // Extend the Criteria API query so that the title and author-name filters are optional and predicates are added
-            // dynamically.
-            CriteriaBuilder cb = em.getCriteriaBuilder();
-            CriteriaQuery<Book> bookCriteriaQuery = cb.createQuery(Book.class);
-            Root<Book> root = bookCriteriaQuery.from(Book.class);
-
-            String titleFilter = "Spring Start Here";
-            String authorNameFilter = "";
-            List<Predicate> predicates = new ArrayList<>();
-            if (titleFilter != null && !titleFilter.isEmpty()) {
-                predicates.add(cb.equal(root.get("title"), titleFilter));
-            }
-
-            Join<Book, Author> authorJoin = root.join("author");
-
-            if (authorNameFilter != null && !authorNameFilter.isEmpty()) {
-                predicates.add(cb.equal(authorJoin.get("name"), authorNameFilter));
-            }
-
-            bookCriteriaQuery.where(predicates.toArray(new Predicate[0])).select(root);
-
-            Query bookQuery = em.createQuery(bookCriteriaQuery);
-            List<Book> booksUsingCriteria = bookQuery.getResultList();
-
-            System.out.println(booksUsingCriteria);
-
-        }
-
-        //  Compare a normal LAZY query with the JOIN FETCH version and explain why JOIN FETCH can prevent
-        // LazyInitializationException for that use case.
-        try (EntityManager em = emf.createEntityManager()) {
-
-            Query query = em.createQuery("SELECT b FROM Book b WHERE b.id=3");
-            //query = em.createQuery("SELECT b FROM Book b JOIN FETCH b.categories WHERE b.id=3");
-            Book book = (Book) query.getSingleResult();
-            em.close();
-            List<Category> categories = book.getCategories();
-            System.out.println(categories);
-        } catch (LazyInitializationException lzie) {
-            System.out.println("A normal query does not fetch the categories right away since its fetch type is lazy");
-        }
-
-        try (EntityManager em = emf.createEntityManager()) {
-//            Query query = em.createQuery("SELECT b FROM Book b WHERE b.id=3");
-            Query query = em.createQuery("SELECT b FROM Book b JOIN FETCH b.categories WHERE b.id=3");
-            Book book = (Book) query.getSingleResult();
-            em.close();
-            List<Category> categories = book.getCategories();
-            System.out.println(categories);
-        }
-
-        // Write one query using standard JPQL and explain how a Hibernate-specific HQL feature would differ.
-        try (EntityManager em = emf.createEntityManager()) {
-//            Query query = em.createQuery("SELECT b FROM Book b WHERE b.id=3");
-            Query jpqlQuery = em.createQuery("SELECT b FROM Book b JOIN FETCH b.publisher p WHERE p.name=?1");
-            jpqlQuery.setParameter(1, "O'Reilly Media");
-
-            Query hqlQuery = em.createQuery("FROM Book b WHERE b.publisher.name=?1");
-            hqlQuery.setParameter(1, "O'Reilly Media");
-
-
-            List<Book> books1 = jpqlQuery.getResultList();
-            List<Book> books2 = hqlQuery.getResultList();
-
-            System.out.println(books1);
-            System.out.println(books2);
+    private static void printList(List list) {
+        for (Object o : list) {
+            System.out.println("    " + o);
         }
     }
 }
